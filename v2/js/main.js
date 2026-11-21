@@ -531,7 +531,7 @@
     // A release jumps only if the press began on the strip, the stone's name has been on screen for HOLD_MIN ms, and the
     // finger did not travel a whole strip width sideways. A press that is dragged sideways at once (over 30 px in the
     // first 150 ms) is a walk, not a jump: it is handed to the joystick.
-    var press = null, CANCEL_UP = 30, WALK_PX = 30, WALK_MS = 150;   // { id, sel, t0, shownAt, x0, y0, lx, travel }
+    var press = null, CANCEL_UP = 30, WALK_PX = 30, WALK_MS = 150, TAP_PX = 12;   // { id, sel, t0, shownAt, x0, y0, lx, travel }
     function nearest(clientX) {
       var r = el.getBoundingClientRect(), best = null, bd = 1e9;
       STONES.forEach(function (o) {
@@ -584,7 +584,10 @@
         if (!press || e.pointerId !== press.id) return;
         var o = press.sel, off = e.clientY < el.getBoundingClientRect().top - CANCEL_UP;
         var shown = performance.now() - press.shownAt, wide = press.travel >= (el.clientWidth || window.innerWidth);
-        if (off || shown < HOLD_MIN || wide) { cancel(); return; }
+        // a plain tap (the finger barely moved) jumps at once, however short; only a slide along the strip has to
+        // rest on its stone for HOLD_MIN, so a stone passed over on the way is never the one jumped to
+        var tap = press.travel < TAP_PX;
+        if (off || wide || (!tap && shown < HOLD_MIN)) { cancel(); return; }
         press = null; show(null);
         jumpTo(o);
       }, { passive: true });
@@ -612,7 +615,16 @@
     st.jumping = true;
     st.speed = 0;                      // fingers that are down stay down: she walks on again when the fade is over
     fadeEl.style.opacity = "1";
-    jumpT1 = setTimeout(function () {
+    var tJump = performance.now();
+    // the move happens only once the screen is really dark: a tap during another fade (a time change) starts the dip
+    // part way, so a fixed 320 ms is not enough; wait for the fade itself (at most 700 ms, then go anyway)
+    function whenDark() {
+      var op = parseFloat(getComputedStyle(fadeEl).opacity);
+      if (op < 0.99 && performance.now() - tJump < 700) { jumpT1 = setTimeout(whenDark, 30); return; }
+      moveNow();
+    }
+    jumpT1 = setTimeout(whenDark, 320);
+    function moveNow() {
       st.s = clamp(o.s, S_MIN, S_MAX);
       // onward is away from the start; at the two ends it is the way back
       if (o.key === "regulator") st.dir = -1; else if (o.key === "boatclub") st.dir = 1;
@@ -628,7 +640,7 @@
       save();
       fadeEl.style.opacity = "0";
       jumpT2 = setTimeout(function () { st.jumping = false; }, 380);
-    }, 320);
+    }
   }
 
   // ---------- start ----------
@@ -730,11 +742,14 @@
     if (st.jumping) { timePending = null; applyTime(v); return; }   // a fade is already running: the light changes under it
     timePending = v;
     fadeEl.style.opacity = "1";
-    timeT1 = setTimeout(function () {
+    var tTime = performance.now();
+    function whenDark() {   // as for a jump: change the light and the crowd only once the screen is really dark
+      if (parseFloat(getComputedStyle(fadeEl).opacity) < 0.99 && performance.now() - tTime < 700) { timeT1 = setTimeout(whenDark, 30); return; }
       timePending = null;
       applyTime(v);
       if (!st.jumping) fadeEl.style.opacity = "0";   // a jump or a restart that began meanwhile owns the fade
-    }, 320);
+    }
+    timeT1 = setTimeout(whenDark, 320);
   }
   function makeRow(row, opts, onPick) {
     var r = $(row); r.innerHTML = "";
