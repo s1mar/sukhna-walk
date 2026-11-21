@@ -3,7 +3,8 @@
 // holds the lines and the personal start-screen strings. The key lives only in the URL
 // fragment (#k=...); it is kept in localStorage after one good decrypt so a reload from
 // Messenger still works. Without a good key the start screen stays hidden and a calm
-// "needs its link" screen shows instead.
+// "needs its link" screen shows instead. A failed download shows a retry screen and never
+// touches the stored key: only a definite decrypt failure of a complete body drops it.
 (function () {
   "use strict";
   var LSK = "sukhna-walk-key";
@@ -27,7 +28,8 @@
 
   function store(k, v) { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) { /* blocked storage */ } }
   function stored() { try { return localStorage.getItem(LSK); } catch (e) { return null; } }
-  function needLink() { $("start").style.display = "none"; $("needlink").hidden = false; }
+  function needLink() { $("start").style.display = "none"; $("loadfail").hidden = true; $("needlink").hidden = false; }
+  function loadFailed() { $("start").style.display = "none"; $("needlink").hidden = true; $("loadfail").hidden = false; }
   function b64u(s) {
     s = s.replace(/-/g, "+").replace(/_/g, "/");
     while (s.length % 4) s += "=";
@@ -35,40 +37,78 @@
     for (var i = 0; i < b.length; i++) a[i] = b.charCodeAt(i);
     return a;
   }
-  function findKey() {
-    var m = location.hash.match(/^#k=([A-Za-z0-9_-]+)/);
-    if (m) return { k: m[1], fromHash: true };
-    var s = stored();
-    return s && /^[A-Za-z0-9_-]+$/.test(s) ? { k: s, fromHash: false } : null;
+  // the keys to try, in order: the one in the link, then the stored one (a mangled link must not beat a good stored key)
+  function candidateKeys() {
+    var out = [], m = location.hash.match(/^#k=([A-Za-z0-9_-]+)/), s = stored();
+    if (m) out.push({ k: m[1], fromHash: true });
+    if (s && /^[A-Za-z0-9_-]+$/.test(s) && !(m && m[1] === s)) out.push({ k: s, fromHash: false });
+    return out;
   }
+  // resolves with the data, or rejects with { definite: true } when this key cannot open a complete body
   function decrypt(keyStr, buf) {
-    var raw = b64u(keyStr);
-    if (raw.length !== 32) return Promise.reject(new Error("key"));
+    var raw;
+    try { raw = b64u(keyStr); } catch (e) { return Promise.reject({ definite: true }); }
+    if (raw.length !== 32) return Promise.reject({ definite: true });
     return crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["decrypt"]).then(function (key) {
       var u = new Uint8Array(buf);
       return crypto.subtle.decrypt({ name: "AES-GCM", iv: u.slice(0, 12) }, key, u.slice(12));
-    }).then(function (plain) { return JSON.parse(new TextDecoder().decode(plain)); });
+    }).then(function (plain) {
+      var data;
+      try { data = JSON.parse(new TextDecoder().decode(plain)); } catch (e) { return Promise.reject({ definite: true }); }
+      if (!data || !data.lines || !data.lines.TOPICS) return Promise.reject({ definite: true });
+      return data;
+    }, function () { return Promise.reject({ definite: true }); });
+  }
+  function get() {
+    return fetch("content.enc", { cache: "no-cache" }).then(function (r) {
+      if (!r.ok) throw new Error("http");
+      return r.arrayBuffer();
+    }).then(function (buf) { if (buf.byteLength < 29) throw new Error("short"); return buf; });
+  }
+  function same(a, b) {
+    if (a.byteLength !== b.byteLength) return false;
+    var x = new Uint8Array(a), y = new Uint8Array(b);
+    for (var i = 0; i < x.length; i++) if (x[i] !== y[i]) return false;
+    return true;
+  }
+  function accept(c, data) {
+    store(LSK, c.k);
+    for (var k in data.lines) SW.lines[k] = data.lines[k];
+    SW.personal = data.strings || {};
+    applyPersonal();
+    $("start").style.display = "";
+    $("loadfail").hidden = true;
+    done();
+  }
+  // try each key on one body; resolves { data, c } or { bad: [keys that definitely failed] }
+  function tryKeys(keys, buf) {
+    var bad = [];
+    function next(i) {
+      if (i >= keys.length) return Promise.resolve({ bad: bad });
+      return decrypt(keys[i].k, buf).then(function (data) { return { data: data, c: keys[i], bad: bad }; },
+        function () { bad.push(keys[i]); return next(i + 1); });
+    }
+    return next(0);
   }
 
-  var found = findKey();
-  if (!found || !window.crypto || !crypto.subtle) { needLink(); return; }
-  fetch("content.enc", { cache: "no-cache" }).then(function (r) {
-    if (!r.ok) throw new Error("http");
-    return r.arrayBuffer();
-  }).then(function (buf) {
-    return decrypt(found.k, buf).then(function (data) {
-      if (!data || !data.lines || !data.lines.TOPICS) throw new Error("shape");
-      store(LSK, found.k);
-      for (var k in data.lines) SW.lines[k] = data.lines[k];
-      SW.personal = data.strings || {};
-      applyPersonal();
-      $("start").style.display = "";
-      done();
-    }, function () {
-      if (!found.fromHash) store(LSK, null);   // a stored key that fails is dropped
-      needLink();
-    });
-  }).catch(function () { needLink(); });
+  function load() {
+    var keys = candidateKeys();
+    if (!keys.length || !window.crypto || !crypto.subtle) { needLink(); return; }
+    get().then(function (buf) {
+      return tryKeys(keys, buf).then(function (r) {
+        if (r.data) { accept(r.c, r.data); return; }
+        // every key failed on this body. A truncated body fails the same way a wrong key does, so fetch it again:
+        // only an identical second body makes the failure definite and lets a stored key be dropped.
+        return get().then(function (buf2) {
+          if (!same(buf, buf2)) { return tryKeys(keys, buf2).then(function (r2) { if (r2.data) accept(r2.c, r2.data); else loadFailed(); }); }
+          keys.forEach(function (c) { if (!c.fromHash) store(LSK, null); });
+          needLink();
+        });
+      });
+    }).catch(function () { loadFailed(); });
+  }
+  $("bRetry").addEventListener("click", function () { $("loadfail").hidden = true; load(); });
+  load();
 
   window.addEventListener("hashchange", function () { if (location.hash.indexOf("#k=") === 0) location.reload(); });
 })();

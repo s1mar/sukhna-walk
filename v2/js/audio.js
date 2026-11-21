@@ -31,6 +31,23 @@
   ];
   var BEAT = 0.62;
 
+  // ---------- the mix for an hour of the day ----------
+  // Pure: what the soundscape should be doing for this walk state. update() and tick() both use it, and the gates read it.
+  // Morning (5.5 to 11) has a dawn chorus (nearly twice golden hour's birdsong) and a thinner crowd; the afternoon (11 to 16.5) has sparse birds and the busiest
+  // crowd; golden hour (16.5 on) has the dusk birds that fade as the light goes; crickets only after dark.
+  function mix(p) {
+    var dusk = clamp(p.dusk || 0, 0, 1);
+    var h = typeof p.hour === "number" && isFinite(p.hour) ? p.hour : 17.5 + dusk * 3;
+    var m = { hour: h, birds: 0, birdGap: [3, 8], chorus: false, crickets: false, crowdK: 1, boats: false, tuneK: 1 };
+    if (h >= 5.5 && h < 11) { m.birds = 1.8; m.birdGap = [1.2, 3.2]; m.chorus = true; m.crowdK = 0.55; }
+    else if (h >= 11 && h < 16.5) { m.birds = 0.4; m.birdGap = [4, 10]; m.crowdK = 1.15; }
+    else if (h >= 16.5 && dusk < 0.3) { m.birds = 1 - dusk / 0.3; }
+    m.crickets = dusk > 0.6 && (h >= 18.5 || h < 6);
+    m.boats = h >= 8.5 && h < 19.5;
+    m.tuneK = h < 16.5 ? 0.6 : 1;
+    return m;
+  }
+
   // ---------- helpers ----------
   function tgt(param, key, v, tc) {
     if (cache[key] !== undefined && Math.abs(cache[key] - v) < 0.0015) return;
@@ -215,8 +232,9 @@
         N.step = undefined;
       }
 
+      var m = mix(p);
       // boatman's tune
-      var tuneOn = dusk < 0.45 && p.s < 900;
+      var tuneOn = dusk < 0.45 && p.s < 900 && m.boats;
       if (N.tune === undefined || N.tune < now - 1) N.tune = now + 1;
       if (tuneOn) {
         while (N.tune < ahead) {
@@ -254,15 +272,19 @@
         N.water = now + rnd(1, 4);
       }
 
-      // dusk birds (golden hour)
+      // birds: a dawn chorus in the morning, a few in the afternoon, the dusk birds at golden hour
       if (N.dbird === undefined || N.dbird < now - 1) N.dbird = now + rnd(1, 3);
-      if (dusk < 0.3) {
-        var dq = 1 - dusk / 0.3;
+      if (m.birds > 0.02) {
+        var dq = m.birds;
         while (N.dbird < ahead) {
           var bf = rnd(2200, 3000);
           tone(N.dbird, B.birds, "sine", bf, bf * 1.12, 0.03 * dq, 0.01, 0.09);
           tone(N.dbird + 0.13, B.birds, "sine", bf * 1.2, bf * 0.95, 0.025 * dq, 0.01, 0.08);
-          N.dbird += rnd(3, 8);
+          if (m.chorus) {   // a second voice, higher, answering in a quick trill
+            var tf = rnd(3300, 4100);
+            for (var q = 0; q < 3; q++) tone(N.dbird + 0.4 + q * 0.07, B.birds, "sine", tf, tf * 1.06, 0.022, 0.006, 0.05);
+          }
+          N.dbird += rnd(m.birdGap[0], m.birdGap[1]);
         }
       } else if (N.dbird < now) {
         N.dbird = now + rnd(1, 3);
@@ -271,7 +293,7 @@
       // crickets and owl after dark
       if (N.cric === undefined || N.cric < now - 1) N.cric = now + rnd(0.2, 1);
       if (N.owl === undefined || N.owl < now - 1) N.owl = now + rnd(8, 20);
-      if (dusk > 0.6) {
+      if (m.crickets) {
         while (N.cric < ahead) {
           var n = 3 + Math.floor(Math.random() * 2);
           var cf = rnd(4300, 4700);
@@ -328,9 +350,10 @@
         var mons = p.season === "monsoon";
         tgt(B.water.gain, "water", mons ? 0.3 : 0.2, 0.8);
         tgt(B.waterLP.frequency, "wlp", mons ? 750 : 500, 0.8);
-        tgt(B.crowd.gain, "crowd", clamp(p.crowd || 0, 0, 1) * (1 - 0.7 * dusk) * 0.12, 0.6);
+        var m = mix(p);
+        tgt(B.crowd.gain, "crowd", clamp(p.crowd || 0, 0, 1) * (1 - 0.7 * dusk) * 0.12 * m.crowdK, 0.6);
         var tl = 0;
-        if (dusk < 0.45 && p.s < 900) tl = (1 - dusk / 0.45) * clamp((900 - p.s) / 120, 0, 1);
+        if (dusk < 0.45 && p.s < 900 && m.boats) tl = (1 - dusk / 0.45) * clamp((900 - p.s) / 120, 0, 1) * m.tuneK;
         tgt(B.tune.gain, "tune", tl * 0.8, 1.2);
         var nl = clamp((dusk - 0.6) / 0.25, 0, 1);
         if (p.season === "winter") nl *= 0.5;
@@ -370,6 +393,7 @@
       } catch (e) { warn(e); }
     },
 
+    mix: mix,
     get started() { return !!ctx; },
     get state() { return ctx ? ctx.state : "none"; },
 
