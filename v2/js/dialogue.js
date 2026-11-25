@@ -46,9 +46,20 @@
   var answered = false;     // she tapped a reply for it
   var withAvatar = true, acts = {}, begun = false, dismissTimer = 0;
 
+  // {name} in a line is the name from the link (SW.who). With no name it goes away with the space or ", " before it,
+  // so a greeting that ends with the name reads as a plain greeting (the generic gate keeps every {name} in one of those two shapes). Text only: the result is
+  // only ever given to textContent or a text node.
+  function fill(s) {
+    if (typeof s !== "string" || s.indexOf("{name}") < 0) return s;
+    var who = typeof SW.who === "string" ? SW.who : "";
+    if (who) return s.split("{name}").join(who);
+    return s.replace(/(?:,\s*|\s+)\{name\}/g, "").split("{name}").join("");
+  }
+
   function show(topic, text, replies, followUp) {
     if (!followUp) answered = false;
     open = topic;
+    text = fill(text);
     sayEl.textContent = "";
     var lines = text.split("\n");
     lines.forEach(function (ln, i) {
@@ -58,7 +69,7 @@
     repEl.innerHTML = "";
     (replies || []).forEach(function (r) {
       var b = document.createElement("button");
-      b.textContent = r.label;
+      b.textContent = fill(r.label);
       b.addEventListener("click", function (e) { e.stopPropagation(); choose(topic, r); });
       repEl.appendChild(b);
     });
@@ -245,6 +256,15 @@
       if (withAvatar && !was && begun && !S.introDone && !open) showIntro(false);
     },
     setQuiet: function (v) { S.quiet = !!v; },
+    // notes on the lake: AI Simar only ever says a line from SW.lines.NOTES (the approved script), chosen by key, never free text
+    noteLine: function (key, i) {
+      var N = SW.lines && SW.lines.NOTES, t = N ? N[key] : null;
+      if (Array.isArray(t)) t = t.length ? t[(Math.abs(i | 0)) % t.length] : null;
+      if (typeof t !== "string" || !t) return false;
+      show({ id: "note" }, t, [], true);
+      answered = true;   // nothing to answer: the hour and walk-past rules for topics leave it alone
+      return true;
+    },
     isQuiet: function () { return !!S.quiet; },
     setHour: function (h) { if (typeof h === "number" && isFinite(h)) S.hour = h; },
     on: function (name, fn) { acts[name] = fn; },

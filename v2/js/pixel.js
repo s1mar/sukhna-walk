@@ -997,6 +997,53 @@ function drawWalk() {
   rect(0, 319, W, 1, P.walkJ, 0.6);
   rect(0, 321, W, 1, mixc(P.capc, P.walk, 0.4));
 }
+/* stargazing (js/stars.js sets SW.stargazeK, 0 to 1): the view tilts up off the dam to a clear sky over the
+   Shivaliks, a faint Milky Way and slowly twinkling stars. Drawn over everything, so it never disturbs the walk. */
+var GZ = null;
+function gazeField() {
+  var r = 7, rnd = function () { r = (r * 16807) % 2147483647; return (r - 1) / 2147483646; };
+  var st = [], mw = [], i;
+  for (i = 0; i < 320; i++) st.push({ x: rnd(), y: rnd() * 0.9, b: 0.35 + 0.65 * Math.pow(rnd(), 2.2), p: rnd() * 6.28, w: 0.6 + rnd() * 1.4 });
+  for (i = 0; i < 900; i++) { var t = rnd(), off = (rnd() + rnd() + rnd() - 1.5) * 0.09; mw.push({ x: 0.08 + t * 0.9 + off * 0.6, y: 0.04 + t * 0.62 - off, b: rnd() }); }
+  var ridge = [];
+  for (i = 0; i <= 64; i++) ridge.push(0.05 + 0.035 * Math.sin(i * 0.37) + 0.016 * Math.sin(i * 1.13 + 1) + 0.005 * Math.sin(i * 2.9));
+  GZ = { st: st, mw: mw, ridge: ridge };
+}
+function drawStargaze() {
+  var k = typeof SW.stargazeK === 'number' ? clamp(SW.stargazeK, 0, 1) : 0;
+  if (k <= 0.01) return;
+  if (!GZ) gazeField();
+  var e = k * k * (3 - 2 * k), y, i, shift = Math.round((1 - e) * H * 0.35);
+  for (y = 0; y < H; y++) { var v = y / H; rect(0, y - OY, W, 1, [Math.round(4 + 14 * v), Math.round(6 + 16 * v), Math.round(20 + 30 * v)], e); }
+  for (i = 0; i < GZ.mw.length; i++) { var m = GZ.mw[i], my = Math.round(m.y * H) + shift; if (my < H) px(Math.round(m.x * W), my - OY, [176, 186, 214], e * (0.10 + 0.16 * m.b)); }
+  for (i = 0; i < GZ.st.length; i++) {
+    var s = GZ.st[i], sx = Math.round(s.x * W), sy = Math.round(s.y * H) + shift;
+    if (sy >= H) continue;
+    var a = e * s.b * (0.7 + 0.3 * Math.sin(ta * s.w + s.p));
+    sy -= OY;   /* px and rect add OY: these rows are buffer rows */
+    px(sx, sy, [236, 240, 255], a);
+    if (s.b > 0.85) { px(sx - 1, sy, [200, 214, 255], a * 0.45); px(sx + 1, sy, [200, 214, 255], a * 0.45); px(sx, sy - 1, [200, 214, 255], a * 0.45); px(sx, sy + 1, [200, 214, 255], a * 0.45); }
+  }
+  /* the Shivaliks as a dark rim along the bottom: she is looking up from the dam */
+  for (var x = 0; x < W; x++) {
+    var f = x / W * 64, j = Math.floor(f), h = GZ.ridge[j] + (GZ.ridge[Math.min(64, j + 1)] - GZ.ridge[j]) * (f - j);
+    var top = H - Math.round(h * H) + Math.round((1 - e) * 40);
+    if (top < H) rect(x, top - OY, 1, H - top, [8, 10, 18], e);
+  }
+}
+/* notes she left: a small folded paper on the paving where she wrote it; one Simar marked built has a warm light on it */
+function drawNoteMarks() {
+  var M = SW.notes && SW.notes.marks ? SW.notes.marks() : null;
+  if (!M) return;
+  for (var i = 0; i < M.length; i++) {
+    var x = Math.round(SX(M[i].s));
+    if (x < -6 || x > W + 6) continue;
+    rect(x - 3, 308, 7, 5, [70, 62, 52], 0.35);                                   /* its shadow */
+    rect(x - 4, 306, 7, 5, [238, 232, 212], 1); rect(x - 4, 306, 7, 1, [200, 192, 170], 1); rect(x + 2, 306, 1, 1, [140, 130, 110], 1);
+    rect(x - 2, 308, 3, 1, [150, 142, 124], 0.9);                                 /* a line of writing */
+    if (M[i].built) { rect(x - 1, 302, 1, 3, [255, 214, 120], 1); px(x - 2, 301, [255, 214, 120], 0.7); px(x, 301, [255, 214, 120], 0.7); px(x - 1, 300, [255, 236, 170], 1); }
+  }
+}
 /* steps down to the jogging trail, cut into the near edge of the walk */
 function drawStairs() {
   for (var i = 0; i < WD.stairs.length; i++) {
@@ -1773,7 +1820,7 @@ function render() {
   /* the kerb, the paving and the hedge run on past both ends of the walk (the chain gate and the end railing
      mark them), so a wide screen never shows a blank slab there */
   drawKerb(); drawWalk();
-  drawStairs(); drawLampPools();
+  drawStairs(); drawLampPools(); drawNoteMarks();
   drawActors();
   for (var i = 0; i < lamps.length; i++) drawLampGlowAndReflect(lamps[i]);
   drawForeground();
@@ -1782,6 +1829,7 @@ function render() {
     pill(nv.x, nv.y - nv.h - 14);
     GA = 1;
   }
+  drawStargaze();   /* last: looking up, nothing of the dam shows */
 }
 function frame(state) {
   if (!buf) return;

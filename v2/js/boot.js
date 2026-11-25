@@ -7,16 +7,19 @@
 // touches the stored key: only a definite decrypt failure of a complete body drops it.
 (function () {
   "use strict";
-  var LSK = "sukhna-walk-key";
+  // Saved keys are per edition (SW.edition, js/edition.js): the editions share one origin. The old unprefixed
+  // key is only a fallback for the editions that had it, so a saved key from before survives.
+  var LSK_BASE = "sukhna-walk-key", LSK = SW.edition.key(LSK_BASE), LSK_OLD = SW.edition.legacy(LSK_BASE);
   var $ = function (id) { return document.getElementById(id); };
   var queue = [], ready = false;
 
   SW.whenReady = function (fn) { if (ready) fn(); else queue.push(fn); };
   function done() { ready = true; var q = queue; queue = []; q.forEach(function (fn) { fn(); }); }
 
+  // the start screen's "from" line; a generic edition (personal.named) puts the name from the link in front, as text
   function applyPersonal() {
     var p = SW.personal || {};
-    if (typeof p.from === "string") $("from").textContent = p.from;
+    if (typeof p.from === "string") $("from").textContent = (p.named === true && SW.who ? "for " + SW.who + ", " : "") + p.from;
   }
 
   // dev path: lines.js already ran
@@ -26,8 +29,20 @@
   SW.lines = {};                       // dialogue.js keeps this reference; it is filled after decrypt
   $("start").style.display = "none";
 
-  function store(k, v) { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) { /* blocked storage */ } }
-  function stored() { try { return localStorage.getItem(LSK); } catch (e) { return null; } }
+  // store(LSK, null) drops the key from this edition's slot and from the old unprefixed one it may have been read from
+  function store(k, v) {
+    try {
+      if (v === null) { localStorage.removeItem(k); if (LSK_OLD) localStorage.removeItem(LSK_OLD); }
+      else localStorage.setItem(k, v);
+    } catch (e) { /* blocked storage */ }
+  }
+  function stored() {
+    try {
+      var v = localStorage.getItem(LSK);
+      if (v === null && LSK_OLD) v = localStorage.getItem(LSK_OLD);
+      return v;
+    } catch (e) { return null; }
+  }
   function needLink() { $("start").style.display = "none"; $("loadfail").hidden = true; $("needlink").hidden = false; }
   function loadFailed() { $("start").style.display = "none"; $("needlink").hidden = true; $("loadfail").hidden = false; }
   function b64u(s) {

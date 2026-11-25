@@ -57,7 +57,14 @@
   function hourNow() { return st.hour === null ? DAY_HOUR + st.dusk * HOURS : st.hour; }
 
   // ---------- save / restore (Messenger reloads the page when it comes back) ----------
-  var KEY = "sukhna-walk-v1";
+  // keys are per edition (js/edition.js): the editions share one origin. The old unprefixed key is read as a fallback
+  // by the editions that had it (never by the generic one), so a walk saved before this change is not lost.
+  var KEY_BASE = "sukhna-walk-v1", KEY = SW.edition.key(KEY_BASE), KEY_OLD = SW.edition.legacy(KEY_BASE);
+  function readSave() {
+    var raw = localStorage.getItem(KEY);
+    if (raw === null && KEY_OLD) raw = localStorage.getItem(KEY_OLD);
+    return raw;
+  }
   function save() {
     if (!st.started) return;      // a walk that has not begun must never overwrite the saved one
     try {
@@ -68,7 +75,7 @@
   // a save is data, never trusted: every field is coerced to a known type and range
   function load() {
     try {
-      var v = JSON.parse(localStorage.getItem(KEY) || "null");
+      var v = JSON.parse(readSave() || "null");
       if (!v || typeof v !== "object" || Array.isArray(v) || num(v.s) === null) return null;
       return {
         s: clamp(num(v.s), S_MIN, S_MAX), dir: v.dir === -1 ? -1 : 1,
@@ -124,7 +131,7 @@
   function placeName(s) {
     if (s < 130) return "Boat Club";
     if (s > W.L - 180) return "Regulator End";
-    for (var i = 0; i < W.stairs.length; i++) if (Math.abs(s - W.stairs[i]) < 18) return "Steps down to the jogging trail";
+    for (var i = 0; i < W.stairs.length; i++) if (Math.abs(s - W.stairs[i]) < 18) return "Steps to the jogging trail";
     return "";
   }
 
@@ -144,8 +151,8 @@
   function keyDir() { return keys.r === keys.l ? 0 : keys.r ? 1 : -1; }
   var debugHold = false;     // SW.debug.setHold: the gates' brisk walk without a finger
   var suppress = { until: 0, target: null, any: false, pid: -1 };
-  var thumbKey = "sukhna-walk-thumb-v1", walkedOnce = false;
-  try { walkedOnce = localStorage.getItem(thumbKey) === "1"; } catch (e) { /* storage blocked: the ring shows each visit */ }
+  var thumbKey = SW.edition.key("sukhna-walk-thumb-v1"), thumbOld = SW.edition.legacy("sukhna-walk-thumb-v1"), walkedOnce = false;
+  try { walkedOnce = localStorage.getItem(thumbKey) === "1" || (!!thumbOld && localStorage.getItem(thumbOld) === "1"); } catch (e) { /* storage blocked: the ring shows each visit */ }
   var restEl = $("rest"), ringEl = $("tring"), dotEl = $("tdot");
   var safeProbe = document.createElement("div");
   safeProbe.style.cssText = "position:fixed;left:0;bottom:0;width:0;visibility:hidden;pointer-events:none;height:env(safe-area-inset-bottom,0px)";
@@ -455,7 +462,7 @@
       icon: "M2 9h12l-2 4H4z M8 9V3l3 4" },
     { key: "vendors", s: 230, name: "The vendors",
       icon: "M2 5h12l-1 4H3z M4 9v4 M12 9v4" },
-    { key: "steps", s: W.stairs[0], name: "Steps down to the jogging trail",
+    { key: "steps", s: W.stairs[0], name: "Steps to the jogging trail",
       icon: "M2 13h4v-3h4V7h4V4" },
     { key: "middle", s: Math.round(W.L / 2), name: "Middle of the dam",
       icon: "M8 2v3 M5 6h6l-1 4H6z M8 10v4 M6 14h4" },
@@ -795,7 +802,7 @@
   // the sheet is a dialog: Tab stays inside it
   sheet.addEventListener("keydown", function (e) {
     if (e.key !== "Tab") return;
-    var f = Array.prototype.filter.call(sheet.querySelectorAll("button"), function (b) { return !b.disabled && b.offsetParent !== null; });
+    var f = Array.prototype.filter.call(sheet.querySelectorAll("button, textarea, input"), function (b) { return !b.disabled && b.offsetParent !== null; });
     if (!f.length) return;
     var a = document.activeElement, first = f[0], last = f[f.length - 1];
     if (e.shiftKey && (a === first || a === sheet)) { e.preventDefault(); last.focus(); }
