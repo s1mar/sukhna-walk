@@ -42,7 +42,7 @@
   }
   function nameFromHash() {
     var m = null;
-    try { m = /(?:^#|&)n=([^&]*)/.exec(location.hash); } catch (e) { m = null; }
+    try { m = /(?:^#|&)n=([^&?]*)/.exec(location.hash); } catch (e) { m = null; }
     return m ? cleanName(m[1]) : "";
   }
 

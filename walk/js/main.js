@@ -131,7 +131,7 @@
   function placeName(s) {
     if (s < 130) return "Boat Club";
     if (s > W.L - 180) return "Regulator End";
-    for (var i = 0; i < W.stairs.length; i++) if (Math.abs(s - W.stairs[i]) < 18) return "Steps down to the jogging trail";
+    for (var i = 0; i < W.stairs.length; i++) if (Math.abs(s - W.stairs[i]) < 18) return "Steps to the jogging trail";
     return "";
   }
 
@@ -462,7 +462,7 @@
       icon: "M2 9h12l-2 4H4z M8 9V3l3 4" },
     { key: "vendors", s: 230, name: "The vendors",
       icon: "M2 5h12l-1 4H3z M4 9v4 M12 9v4" },
-    { key: "steps", s: W.stairs[0], name: "Steps down to the jogging trail",
+    { key: "steps", s: W.stairs[0], name: "Steps to the jogging trail",
       icon: "M2 13h4v-3h4V7h4V4" },
     { key: "middle", s: Math.round(W.L / 2), name: "Middle of the dam",
       icon: "M8 2v3 M5 6h6l-1 4H6z M8 10v4 M6 14h4" },
@@ -802,7 +802,7 @@
   // the sheet is a dialog: Tab stays inside it
   sheet.addEventListener("keydown", function (e) {
     if (e.key !== "Tab") return;
-    var f = Array.prototype.filter.call(sheet.querySelectorAll("button"), function (b) { return !b.disabled && b.offsetParent !== null; });
+    var f = Array.prototype.filter.call(sheet.querySelectorAll("button, textarea, input"), function (b) { return !b.disabled && b.offsetParent !== null; });
     if (!f.length) return;
     var a = document.activeElement, first = f[0], last = f[f.length - 1];
     if (e.shiftKey && (a === first || a === sheet)) { e.preventDefault(); last.focus(); }

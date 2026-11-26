@@ -1,20 +1,6 @@
-// Notes on the lake. In More, the note button opens a box; she writes and picks the private choice (kept on her
-// phone only, never sent anywhere) or the told choice (kept on her phone and sent to Simar's private repo,
-// s1mar/sukhna-notes, file notes.json, through the GitHub Contents API). A small folded paper marks each note on
-// the dam; Simar can mark a told note built, and when she next walks up to it AI Simar says the approved line.
-//
-// Every word she sees comes from SW.lines.NOTES (the approved script); with no NOTES (the generic edition) this
-// file does nothing. AI Simar's replies are chosen by key through SW.dialogue.noteLine, never written here.
-//
-// The key to the repo: Simar opens his own link with &simar=1 added, taps MAKE THE KEY (GitHub's fine-grained
-// token form, filled in), pastes the token, and the page builds her link with &p=<pairing> added. Her phone keeps
-// the pairing in its own storage and drops it from the address bar. No token is ever in this file, the repo
-// or a release. Until a pairing exists, told notes wait on the phone and are sent on the next sync.
-//
-// Photos (one per note, the jukebox pattern): resized and re-encoded on the phone through a canvas (JPEG, long side
-// at most 1280, under about 300 KB), which drops EXIF and GPS. The photo is kept on the phone in IndexedDB. For a
-// told note it is its own file, images/<note id>.jpg, uploaded before the note points at it: the note's text syncs
-// at once, and note.img is only set after GitHub has the file, so a note never points at a missing picture.
+// Notes on the lake; design, storage, pairing and photos are in notes/NOTES_FEATURE.md. Every word she sees is from
+// SW.lines.NOTES (approved script); without it (generic edition) this file does nothing. No token is ever in this
+// file, the repo or a release. Told photos upload to images/<id>.jpg before a note points at them.
 (function () {
   "use strict";
   var REPO = "s1mar/sukhna-notes", FILE = "notes.json";
@@ -38,7 +24,7 @@
     if (!n || typeof n !== "object" || typeof n.id !== "string" || !/^[a-z0-9]{6,24}$/.test(n.id)) return null;
     var s = num(n.s, 0, 5000), u = num(n.u, 0, 1e14), at = num(n.at, 0, 1e14);
     if (s === null || u === null) return null;
-    var out = { id: n.id, s: s, at: at || u, u: u, to: n.to === "simar" ? "simar" : "me", text: String(n.text || "").slice(0, MAX_TEXT), built: !!n.built, hour: num(n.hour, 0, 24) };
+    var out = { id: n.id, s: s, at: at || u, u: u, to: n.to === "simar" ? "simar" : "me", text: (typeof n.text == "string" ? n.text : "").slice(0, MAX_TEXT), built: !!n.built, hour: n.hour == null ? null : num(n.hour, 0, 24) };
     var m = n.img;
     if (m && typeof m === "object" && m.path === "images/" + n.id + ".jpg") out.img = { path: m.path, w: num(m.w, 0, 8192) || 0, h: num(m.h, 0, 8192) || 0, bytes: num(m.bytes, 0, 4e6) || 0 };
     if (n.pp === true) out.pp = true;   // a photo on this phone that is not on GitHub yet (never synced)
@@ -54,7 +40,7 @@
     try { doc = cleanDoc(JSON.parse(localStorage.getItem(KEY) || "null")); } catch (e) { doc = { v: 1, notes: {} }; }
     try { var p = JSON.parse(localStorage.getItem(PKEY) || "null"); if (p && typeof p.t === "string" && p.r === REPO) pair = { t: p.t, r: REPO }; } catch (e) { pair = null; }
   }
-  function persist() { try { localStorage.setItem(KEY, JSON.stringify(doc)); } catch (e) { /* storage blocked: notes last this visit */ } }
+  function persist() { try { var o = cleanDoc(JSON.parse(localStorage.getItem(KEY))).notes; for (var k in o) if (!doc.notes[k] || o[k].u > doc.notes[k].u) doc.notes[k] = o[k]; localStorage.setItem(KEY, JSON.stringify(doc)); } catch (e) { /* storage blocked: notes last this visit */ } }
   function savePair() { try { if (pair) localStorage.setItem(PKEY, JSON.stringify(pair)); else localStorage.removeItem(PKEY); } catch (e) { /* storage blocked */ } }
 
   // ---- pairing from her link: #k=...&p=<base64url {"t":token,"r":repo}>; kept on the phone, dropped from the address bar
@@ -64,7 +50,7 @@
   function unb64(s) { var o = atob(s.replace(/\s/g, "")), b = new Uint8Array(o.length); for (var i = 0; i < o.length; i++) b[i] = o.charCodeAt(i); return new TextDecoder().decode(b); }
   function takePairFromLink() {
     var m = /(?:^#|&)p=([A-Za-z0-9_-]+)/.exec(location.hash);
-    if (!m) return;
+    if (!m || !/^#k=/.test(location.hash)) return;
     try { var p = JSON.parse(unb64url(m[1])); if (p && typeof p.t === "string" && p.t && p.r === REPO) { pair = { t: p.t, r: REPO }; savePair(); } } catch (e) { /* a broken pairing: ignored */ }
     try { history.replaceState(null, "", location.pathname + location.search + location.hash.replace(/&p=[A-Za-z0-9_-]+/, "")); } catch (e) { /* the address bar keeps it */ }
   }
@@ -85,22 +71,24 @@
   }
   function headers(extra) { var h = { Accept: "application/vnd.github+json" }; h.Authorization = "Bearer " + pair.t; for (var k in extra || {}) h[k] = extra[k]; return h; }
   function url() { return API + REPO + "/contents/" + FILE; }
+  function later(n) { return Math.max(Date.now(), n.u + 1); }   // a phone clock ahead never undoes a newer change
+  function ts() { return AbortSignal.timeout && AbortSignal.timeout(45000); }   // a hung request ends
   function same(a, b) { return JSON.stringify(sortKeys(a)) === JSON.stringify(sortKeys(b)); }
   function sortKeys(o) { var out = {}; Object.keys(o).sort().forEach(function (k) { out[k] = o[k]; }); return out; }
   async function runSync() {
-    await sendPhotos();
     for (var i = 0; i < 4; i++) {
-      var r = await fetch(url() + "?_=" + Date.now(), { headers: headers(), cache: "no-store" });
+      var r = await fetch(url() + "?_=" + Date.now(), { signal: ts(), headers: headers(), cache: "no-store" });
       var sha = null, remote = { v: 1, notes: {} };
       if (r.status === 404) { /* the file is not there yet: the first write makes it */ }
-      else if (r.ok) { var j = await r.json(); sha = j.sha; try { remote = cleanDoc(JSON.parse(j.content ? unb64(j.content) : "{}")); } catch (e) { return "unreadable"; } }   // never overwrite a file we cannot read
+      else if (r.ok) { var j = await r.json(); sha = j.sha; try { remote = cleanDoc(JSON.parse(j.content ? unb64(j.content) : j.size ? "?" : "{}")); } catch (e) { return "unreadable"; } }   // never overwrite a file we cannot read
       else return r.status === 401 ? "expired" : r.status === 403 || r.status === 404 ? "denied" : "offline";
       if (merge(remote)) { persist(); }
+      if (!i) await sendPhotos();   // after the merge, so a photo's newer u never undoes Simar's Mark built
       var mine = shared();
       if (sha && same(mine, remote.notes)) return "ok";
       var body = { message: "notes: " + new Date().toISOString(), content: b64(JSON.stringify({ v: 1, notes: mine }, null, 1)) };
       if (sha) body.sha = sha;
-      var w = await fetch(url(), { method: "PUT", headers: headers({ "Content-Type": "application/json" }), body: JSON.stringify(body) });
+      var w = await fetch(url(), { method: "PUT", signal: ts(), headers: headers({ "Content-Type": "application/json" }), body: JSON.stringify(body) });
       if (w.ok) return "ok";
       if (w.status === 409 || w.status === 422) { await new Promise(function (res) { setTimeout(res, 250 + Math.random() * 500); }); continue; }
       return w.status === 401 ? "expired" : w.status === 403 ? "denied" : "offline";
@@ -159,10 +147,10 @@
   async function putPhoto(n) {
     var blob = await picGet(n.id); if (!blob) return "gone";
     var path = "images/" + n.id + ".jpg";
-    var w = await fetch(picUrl(path), { method: "PUT", headers: headers({ "Content-Type": "application/json" }), body: JSON.stringify({ message: "notes: photo " + new Date().toISOString(), content: await blobB64(blob) }) });
+    var w = await fetch(picUrl(path), { method: "PUT", signal: ts(), headers: headers({ "Content-Type": "application/json" }), body: JSON.stringify({ message: "notes: photo " + new Date().toISOString(), content: await blobB64(blob) }) });
     if (!w.ok && w.status !== 422) return "offline";   // 422: the file is already there from an earlier try
     var meta = n.pic || {};
-    n.img = { path: path, w: meta.w || 0, h: meta.h || 0, bytes: blob.size }; delete n.pp; n.u = Date.now(); persist();
+    n.img = { path: path, w: meta.w || 0, h: meta.h || 0, bytes: blob.size }; delete n.pp; n.u = later(n); persist();
     return "ok";
   }
   async function sendPhotos() {
@@ -174,10 +162,15 @@
     }
   }
   function waiting(id) { var n = doc.notes[id]; return !!(n && n.pp); }
-  async function photoUrl(n) {
+  var pu = {};   // one fetch per photo (overlapping ones hung in WebKit); a failure is retried
+  function photoUrl(n) {
+    var k = n.id + !!n.pic, f = function (u) { delete pu[k]; return u; };
+    return pu[k] || (pu[k] = fetchPhoto(n).then(function (u) { return u || f(u); }, function (e) { f(); throw e; }));
+  }
+  async function fetchPhoto(n) {
     if (n.pic) { try { var b = await picGet(n.id); if (b) return URL.createObjectURL(b); } catch (e) { /* not on this phone */ } }
     if (!n.img || !pair) return null;
-    var r = await fetch(picUrl(n.img.path), { headers: headers({ Accept: "application/vnd.github.raw" }), cache: "no-store" });
+    var r = await fetch(picUrl(n.img.path), { signal: ts(), headers: headers({ Accept: "application/vnd.github.raw" }), cache: "no-store" });
     if (!r.ok) return null;
     return URL.createObjectURL(new Blob([await r.arrayBuffer()], { type: "image/jpeg" }));
   }
@@ -296,7 +289,7 @@
       var list = Object.keys(doc.notes).map(function (k) { return doc.notes[k]; }).filter(function (n) { return n.to === "simar"; }).sort(function (a, b) { return b.at - a.at; });
       if (!list.length) wrap.appendChild(el("p", { class: "small", text: "No notes yet." }));
       list.forEach(function (n) {
-        var b = el("button", { class: "noteBuilt", text: n.built ? "Built (undo)" : "Mark built", on: function () { n.built = !n.built; n.u = Date.now(); persist(); sync().then(render); render(); } });
+        var b = el("button", { class: "noteBuilt", text: n.built ? "Built (undo)" : "Mark built", on: function () { n.built = !n.built; n.u = later(n); persist(); sync().then(render); render(); } });
         wrap.appendChild(el("p", { class: "small", text: Math.round(n.s) + " m, " + new Date(n.at).toLocaleString() + ": " + n.text }));
         if (n.img) {
           var im = el("img", { class: "notePhoto", alt: "Photo with this note" }); wrap.appendChild(im);
@@ -306,6 +299,7 @@
       });
     }
     render();
+    if (pair) sync().then(render);
   }
 
   // ---- markers, and the built line when she walks up to a built note

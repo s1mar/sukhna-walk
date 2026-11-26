@@ -75,8 +75,8 @@
     }, function () { return Promise.reject({ definite: true }); });
   }
   function get() {
-    return fetch("content.enc", { cache: "no-cache" }).then(function (r) {
-      if (!r.ok) throw new Error("http");
+    return fetch("content.enc", { cache: "no-cache", signal: AbortSignal.timeout && AbortSignal.timeout(30000) }).then(function (r) {
+      if (!r.ok || /html/.test(r.headers.get("content-type"))) throw new Error("http");   // a wifi login page is not a wrong key
       return r.arrayBuffer();
     }).then(function (buf) { if (buf.byteLength < 29) throw new Error("short"); return buf; });
   }

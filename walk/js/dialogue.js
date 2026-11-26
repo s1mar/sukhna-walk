@@ -256,6 +256,15 @@
       if (withAvatar && !was && begun && !S.introDone && !open) showIntro(false);
     },
     setQuiet: function (v) { S.quiet = !!v; },
+    // notes on the lake: AI Simar only ever says a line from SW.lines.NOTES (the approved script), chosen by key, never free text
+    noteLine: function (key, i) {
+      var N = SW.lines && SW.lines.NOTES, t = N ? N[key] : null;
+      if (Array.isArray(t)) t = t.length ? t[(Math.abs(i | 0)) % t.length] : null;
+      if (typeof t !== "string" || !t) return false;
+      show({ id: "note" }, t, [], true);
+      answered = true;   // nothing to answer: the hour and walk-past rules for topics leave it alone
+      return true;
+    },
     isQuiet: function () { return !!S.quiet; },
     setHour: function (h) { if (typeof h === "number" && isFinite(h)) S.hour = h; },
     on: function (name, fn) { acts[name] = fn; },
