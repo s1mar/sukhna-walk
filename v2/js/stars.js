@@ -1,5 +1,5 @@
 // Stargazing. At night (19:30 to 5:00) near the Regulator End a button lets her look up: the view tilts up off
-// the dam to the stars over the Shivaliks (drawn by pixel.js from SW.stargazeK). The button turns into the way
+// the dam to the stars over the Shivaliks (drawn by sideview.js from SW.stargazeK). The button turns into the way
 // back; walking, a tap on the scene, or leaving the spot also brings her back. AI Simar's card about it is the
 // "stars" topic in lines.js; its "I do" reply calls the "stars" act. The button words come from SW.lines.STARS
 // (the approved script); with no STARS (the generic edition) this file does nothing. Nothing here is saved.
